@@ -169,8 +169,9 @@ def stream_text_chat_completion(
 
         text = "".join(text_parts)
 
-        calls, tool_error = parse_strict_json_tool_call(
+        calls, tool_error = _parse_strict_json_tool_call_with_exact_search_echo_recovery(
             text,
+            messages,
             tools,
             tool_choice,
         )
@@ -772,8 +773,9 @@ def text_completion_response(
             ),
         )
 
-        calls, tool_error = parse_strict_json_tool_call(
+        calls, tool_error = _parse_strict_json_tool_call_with_exact_search_echo_recovery(
             text,
+            messages,
             tools,
             tool_choice,
         )
@@ -1462,6 +1464,155 @@ def _latest_user_text(
             return content.strip()
 
     return ""
+
+
+def _parse_strict_json_tool_call_with_exact_search_echo_recovery(
+    text: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+) -> tuple[list[tuple[str, dict[str, Any]]], str]:
+    """Recover one observed exact-search prefix around a strict tool call.
+
+    Normal behavior always belongs to ``parse_strict_json_tool_call``.
+
+    Recovery is deliberately narrow.  It is attempted only when the
+    original text is not already a valid strict tool call and has exactly
+    the observed prefix form::
+
+        search("<latest user message>")<tool_call>...</tool_call>
+
+    The search argument must JSON-decode to the latest user message
+    exactly.  The remainder is never trusted directly: it must itself pass
+    the existing strict tool parser, including tool allow-list and argument
+    schema validation.
+
+    We never execute or reinterpret ``search(...)`` itself.
+    """
+
+    original_calls, original_error = (
+        parse_strict_json_tool_call(
+            text,
+            tools,
+            tool_choice,
+        )
+    )
+
+    # Preserve every already-valid strict call and every explicit strict
+    # parser error.  Prefix recovery is only for the ordinary
+    # "not_tool_call" case.
+    if (
+        original_calls
+        or original_error != "not_tool_call"
+    ):
+        return (
+            original_calls,
+            original_error,
+        )
+
+    stripped = str(
+        text or ""
+    ).strip()
+
+    prefix = "search("
+
+    if not stripped.lower().startswith(
+        prefix
+    ):
+        return (
+            original_calls,
+            original_error,
+        )
+
+    payload_text = stripped[
+        len(prefix):
+    ].lstrip()
+
+    try:
+        argument, end = (
+            json.JSONDecoder().raw_decode(
+                payload_text
+            )
+        )
+
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
+        return (
+            original_calls,
+            original_error,
+        )
+
+    if not isinstance(
+        argument,
+        str,
+    ):
+        return (
+            original_calls,
+            original_error,
+        )
+
+    tail = payload_text[
+        end:
+    ].lstrip()
+
+    if not tail.startswith(")"):
+        return (
+            original_calls,
+            original_error,
+        )
+
+    remainder = tail[
+        1:
+    ].strip()
+
+    if not remainder:
+        return (
+            original_calls,
+            original_error,
+        )
+
+    latest_user = _latest_user_text(
+        messages
+    )
+
+    if not latest_user:
+        return (
+            original_calls,
+            original_error,
+        )
+
+    if argument.strip() != latest_user:
+        return (
+            original_calls,
+            original_error,
+        )
+
+    # The prefix is discarded only if the complete remainder independently
+    # passes the existing strict parser.
+    recovered_calls, recovered_error = (
+        parse_strict_json_tool_call(
+            remainder,
+            tools,
+            tool_choice,
+        )
+    )
+
+    if recovered_calls:
+        return (
+            recovered_calls,
+            recovered_error,
+        )
+
+    # Invalid/malformed/unknown/schema-invalid remainder is NOT promoted to
+    # a tool call.  Preserve the original not_tool_call result so existing
+    # pollution classification/retry policy remains responsible for it.
+    return (
+        original_calls,
+        original_error,
+    )
 
 
 def _looks_like_ordinary_search_echo_pollution(
