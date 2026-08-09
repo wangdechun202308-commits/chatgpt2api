@@ -1476,12 +1476,14 @@ def _looks_like_ordinary_search_echo_pollution(
     Hermes 的普通聊天请求也可能携带默认 Function Tools，因此
     不能以 tools 是否为空作为普通回答的判断条件。
 
-    仅匹配如下结构：
+    仅匹配如下两种结构：
+
+        search("<最新用户消息的 JSON 字符串>")
 
         search("<最新用户消息的 JSON 字符串>")<普通回答>
 
-    search 参数必须在 JSON 解码后精确等于最新用户消息，
-    且 search(...) 后必须还存在非空回答。
+    search 参数必须在 JSON 解码后精确等于最新用户消息。
+    纯 exact echo 与带尾部普通回答的 echo 都属于模型协议污染。
 
     强制工具模式以及已经存在真实工具结果的后续轮次不在此
     分类中，继续由原强制工具或 post-tool 污染逻辑处理。
@@ -1519,11 +1521,10 @@ def _looks_like_ordinary_search_echo_pollution(
     if not tail.startswith(")"):
         return False
 
-    remainder = tail[1:].strip()
-
-    if not remainder:
-        return False
-
+    # ``search(<latest-user>)`` itself is already an observed model
+    # protocol echo.  A trailing ordinary answer is optional and does not
+    # change the classification.  The exact latest-user equality check
+    # below keeps this detector deliberately narrow.
     latest_user = _latest_user_text(messages)
 
     if not latest_user:
