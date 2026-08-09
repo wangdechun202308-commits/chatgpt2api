@@ -1898,6 +1898,37 @@ def _tool_retry_messages(
         )
 
     if tool_error == "ordinary_search_echo_pollution":
+        # ordinary-search echo pollution can occur on both plain-chat
+        # requests and auto Function Tool requests.
+        #
+        # If executable Function Tools are actually available and the
+        # caller did not disable them with tool_choice="none", recover
+        # through the existing auto-tool bridge prompt.  That preserves
+        # the model's legal path to emit a strict <tool_call> for an
+        # unfinished task.
+        #
+        # Plain chat / explicitly tool-disabled requests retain the
+        # original ordinary-chat recovery behavior.
+        _function_tools_available = bool(
+            normalized_function_tools(tools)
+        )
+
+        _tools_explicitly_disabled = (
+            isinstance(tool_choice, str)
+            and tool_choice.strip().lower() == "none"
+        )
+
+        if (
+            _function_tools_available
+            and not _tools_explicitly_disabled
+        ):
+            return _auto_tool_pollution_retry_messages(
+                messages,
+                tools,
+                tool_choice,
+                next_attempt,
+            )
+
         return _ordinary_pollution_retry_messages(
             messages,
             next_attempt,
