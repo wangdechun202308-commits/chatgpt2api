@@ -398,13 +398,50 @@ def completed_tool_rounds(
     return completed
 
 
+def _current_tool_chain_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Return only the message suffix belonging to the current user task.
+
+    MAX_TOOL_ROUNDS is a per-task / per-tool-chain safety limit.
+    Historical tool rounds from earlier user requests must not permanently
+    disable tools in a long-lived Hermes / Telegram conversation.
+
+    A new role=user message starts a new task boundary. Tool results remain
+    role=tool, so ordinary multi-round tool execution continues to accumulate
+    within the same task.
+    """
+    latest_user_index: int | None = None
+
+    for index, message in enumerate(messages):
+        if (
+            isinstance(message, dict)
+            and str(message.get("role") or "") == "user"
+        ):
+            latest_user_index = index
+
+    if latest_user_index is None:
+        return messages
+
+    return messages[latest_user_index:]
+
+
+def current_tool_rounds(
+    messages: list[dict[str, Any]],
+) -> int:
+    return completed_tool_rounds(
+        _current_tool_chain_messages(messages)
+    )
+
+
 def _tool_round_limit_reached(
     body: dict[str, Any],
 ) -> bool:
     raw_messages = chat_messages_from_body(body)
 
     return (
-        completed_tool_rounds(raw_messages)
+        current_tool_rounds(raw_messages)
         >= MAX_TOOL_ROUNDS
     )
 
@@ -489,7 +526,7 @@ def _bridge_openai_tool_history(messages: list[dict[str, Any]]) -> list[dict[str
 def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     model = str(body.get("model") or "auto").strip() or "auto"
     raw_messages = chat_messages_from_body(body)
-    tool_rounds = completed_tool_rounds(raw_messages)
+    tool_rounds = current_tool_rounds(raw_messages)
     tool_limit_reached = tool_rounds >= MAX_TOOL_ROUNDS
 
     bridged_messages = _bridge_openai_tool_history(raw_messages)
