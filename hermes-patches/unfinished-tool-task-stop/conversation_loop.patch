@@ -1,0 +1,49 @@
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -7055,6 +7055,46 @@
+                     final_response = None
+                     continue
+ 
++                # ── Explicit unfinished tool-task stop guard ───────────
++                try:
++                    from agent.unfinished_tool_task_stop import build_unfinished_tool_task_nudge
++                    _unfinished_nudge = build_unfinished_tool_task_nudge(
++                        user_message=user_message,
++                        assistant_content=final_response,
++                        valid_tool_names=agent.valid_tool_names,
++                        attempts=getattr(agent, "_unfinished_tool_task_nudges", 0),
++                    )
++                except Exception:
++                    logger.debug(
++                        "unfinished-tool-task stop-loop check failed",
++                        exc_info=True,
++                    )
++                    _unfinished_nudge = None
++
++                if _unfinished_nudge:
++                    agent._unfinished_tool_task_nudges = (
++                        getattr(agent, "_unfinished_tool_task_nudges", 0) + 1
++                    )
++                    final_msg["finish_reason"] = "unfinished_tool_task"
++                    messages.append(final_msg)
++                    messages.append({
++                        "role": "user",
++                        "content": _unfinished_nudge,
++                        "_unfinished_tool_task_synthetic": True,
++                    })
++                    agent._session_messages = messages
++                    logger.info(
++                        "unfinished tool-task stop-loop nudge issued (attempt %d)",
++                        agent._unfinished_tool_task_nudges,
++                    )
++                    agent._emit_status(
++                        "↻ Required tool steps remain unfinished — continuing"
++                    )
++                    final_response = None
++                    continue
++
++                agent._unfinished_tool_task_nudges = 0
++
+                 # ── Kanban worker terminal-tool stop guard ─────────────
+                 # Workers must end with kanban_complete / kanban_block.
+                 # Models sometimes narrate the next step ("Let me write the

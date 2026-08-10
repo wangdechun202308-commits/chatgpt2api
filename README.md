@@ -248,3 +248,15 @@ docker exec chatgpt2api \
 ```
 
 这两个版本信息都符合，即可确认当前安装的是本次已经验证过的 MyAIAgent V4。
+---
+
+## Hermes Agent 增强补丁
+
+MyAIAgent V4 现在也保存经过真实环境验证的 Hermes Agent 侧增强补丁。
+
+当前补丁：`hermes-patches/unfinished-tool-task-stop/`
+
+作用：防止 Hermes 在多步骤真实工具任务仍未完成时，因为普通 `finish_reason=stop` 提前结束任务。
+
+该目录保存最小 `conversation_loop.patch`、新增 helper、安装说明和 SHA256，不保存任何 API Key、S3 密钥或私人运行配置。
+
